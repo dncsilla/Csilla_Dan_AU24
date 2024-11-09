@@ -150,8 +150,9 @@ WITH updated_customer AS (                         -- Creating CTE FOR the updat
         AND NOT EXISTS (                                                        -- Criteria 3: Ensure that customer NOT EXISTS, NO duplication allowed.
         SELECT *
         FROM customer c
-        WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan')) -- USING upper() FOR 
-    )
+        WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan') -- USING upper() FOR 
+    	)
+	Limit 1 )                                                               -- Choosing ONLY one customer TO be updated based ON the criteria
     RETURNING customer_id, first_name, last_name, email, address_id
 )
 SELECT * FROM updated_customer;
@@ -161,13 +162,13 @@ DELETE FROM payment p                                                          -
 WHERE p.customer_id =                                                          -- USING "=", because ONLY one value IS expected
 	(SELECT c.customer_id 
 	FROM customer c 
-	WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan'); -- USING upper not to be case-insensitive
+	WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan')); -- USING upper not to be case-insensitive
 
 DELETE FROM rental r                                                            -- deleting rental related DATA FOR SPECIFIC customer 
 WHERE r.customer_id =                                                           -- USING "=", because ONLY one value IS expected
 	(SELECT c.customer_id 
 	FROM customer c 
-	WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan'); -- USING upper not to be case-insensitive
+	WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan')); -- USING upper not to be case-insensitive
 
  /*6.Rent you favorite movies from the store they are in and pay for them (add corresponding records to the database 
    to represent this activity)
@@ -177,33 +178,51 @@ WHERE r.customer_id =                                                           
 
 
 
-WITH target_customer AS (                                    --CTE to retrieve customer ID based on the specified name directly in the query
+WITH target_customer AS (                                            -- cte for selecting target customer
     SELECT customer_id
     FROM customer
-    WHERE UPPER(first_name) =UPPER('Csilla') AND UPPER(last_name) = UPPER('Dan'); -- USING upper not to be case-insensitive
+    WHERE UPPER(first_name) = UPPER('Csilla')                         -- USING upper not to be case-insensitive
+      AND UPPER(last_name) = UPPER('Dan')
     LIMIT 1
 ),
-rented_movies AS (                                           -- CTE for insert rentals for each favorite movie and retrieve rental IDs
-    INSERT INTO rental (inventory_id, customer_id, staff_id, rental_date)
-    SELECT i.inventory_id, c.customer_id, 2, '2024-06-22 19:10:25-07' -- choosing staff id 2
+rented_movies AS (                                                    -- cte for selecting rented movies
+    SELECT i.inventory_id, tc.customer_id, 2 AS staff_id, '2024-06-22 19:10:25-07' AS rental_date
     FROM inventory i
-    CROSS JOIN target_customer c -- attaches the single customer_id to each row in the inventory table that matches the specified films, ensuring that all rentals are associated with the same customer.
+    CROSS JOIN target_customer tc                                     -- attaches the single customer_id to each row in the inventory table that matches the specified films, ensuring that all rentals are associated with the same customer.
     WHERE i.film_id IN (
         SELECT film_id 
         FROM film 
         WHERE title IN ('CITIZEN KANE', 'THE USUAL SUSPECTS', 'SEVEN')
     )
-    RETURNING rental_id, customer_id, inventory_id -- Retrieve additional necessary fields
+    AND NOT EXISTS (                                                   -- Retrieve or Insert Rentals, Ensuring No Duplicates WITH NOT exists
+        SELECT r.rental_id FROM rental r
+        WHERE r.customer_id = tc.customer_id 
+          AND r.inventory_id = i.inventory_id
+    )
+),
+inserted_rentals AS (                                                  -- CTE for insert rentals for each favorite movie and retrieve rental IDs
+    INSERT INTO rental (inventory_id, customer_id, staff_id, rental_date)
+    SELECT inventory_id, customer_id, staff_id, rental_date::date
+    FROM rented_movies
+    RETURNING rental_id, customer_id, inventory_id
+),
+inserted_payments AS (                      -- Insert a payment for each rental using the returned rental IDs
+    INSERT INTO payment (customer_id, staff_id, rental_id, amount, payment_date)
+    SELECT r.customer_id, 
+           1 AS staff_id,                   -- choosing staff_id 1
+           r.rental_id, 
+           f.rental_rate,                   -- Use film's rental_rate as payment amount
+           '2017-06-01' AS payment_date     -- payment date within the first half of 2017
+    FROM inserted_rentals r
+    INNER JOIN inventory i ON r.inventory_id = i.inventory_id 
+    INNER JOIN film f ON f.film_id = i.film_id
+    WHERE f.title IN ('CITIZEN KANE', 'THE USUAL SUSPECTS', 'SEVEN')
+    AND NOT EXISTS (                                                  -- Insert Payments Without Duplicates
+        SELECT p.payment_id FROM payment p
+        WHERE p.customer_id = r.customer_id 
+          AND p.rental_id = r.rental_id
+    )
+    RETURNING payment_id, customer_id, rental_id     -- retrieve ALL ids
 )
-INSERT INTO payment (customer_id, staff_id, rental_id, amount, payment_date) -- Insert a payment for each rental using the returned rental IDs
-SELECT r.customer_id, 
-       1 AS staff_id, -- choosing staff_id 1
-       r.rental_id, 
-       f.rental_rate, -- Use film's rental_rate as payment amount
-       '2017-06-01' AS payment_date -- payment date within the first half of 2017
-FROM rented_movies r
-JOIN inventory i ON r.inventory_id = i.inventory_id 
-JOIN film f ON f.film_id = i.film_id
-WHERE f.title IN ('CITIZEN KANE', 'THE USUAL SUSPECTS', 'SEVEN')
-RETURNING payment_id; -- Retrieve the payment IDs 
+SELECT * FROM inserted_payments;
 
