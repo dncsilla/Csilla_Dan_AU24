@@ -26,7 +26,7 @@ Add comments (as example why you chose particular constraint, datatytpe, etc.)
 Please attached a graphical image with your fixed logical model */
 
 --1. Creating the database
-DROP  DATABASE recruitment_agency; 
+CREATE DATABASE recruitment_agency; 
 --2.Creating SCHEMA for DATABASE
 CREATE SCHEMA recruitment;
 --Creating the tables starting with the less complex ones:
@@ -153,34 +153,34 @@ CREATE TABLE IF NOT EXISTS recruitment.CandidateSkills (
     FOREIGN KEY (SkillID) REFERENCES recruitment.Skills(SkillID)
 );
 -- Altering all tables to have record_ts column with current date as default
-ALTER TABLE recruitment.Skills
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.JobSkills
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Candidates
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Status
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.CandidateSkills
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Applications
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Jobs
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.JobType
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Location
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Interviews
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Recruiters
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Companies
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Company_Locations
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
-ALTER TABLE recruitment.Work_with
-    ADD COLUMN record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Skills 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.JobSkills 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Candidates 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Status 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.CandidateSkills 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Applications 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Jobs 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.JobType 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Location 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Interviews 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Recruiters 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Companies 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Company_Locations 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE recruitment.Work_with 
+    ADD COLUMN IF NOT EXISTS record_ts DATE NOT NULL DEFAULT CURRENT_DATE;
 -- Creating a CHECK to to make sure the value has been set for the existing rows.
 WITH check_nulls AS (
     SELECT 'Status' AS table_name, COUNT(*) AS null_count 
