@@ -2,7 +2,7 @@
 Create a view called 'sales_revenue_by_category_qtr' that shows the film category and total sales revenue for the current quarter and year. The view should only display categories with at least one sale in the current quarter. 
 Note: when the next quarter begins, it will be considered as the current quarter.*/
 
-CREATE OR REPLACE VIEW sales_revenue_by_category_pre2017 AS
+CREATE OR REPLACE VIEW sales_revenue_by_category_qtr AS
 WITH category_sales AS (
     SELECT 
         c.name AS category_name,
@@ -15,19 +15,18 @@ WITH category_sales AS (
     JOIN film f ON i.film_id = f.film_id
     JOIN film_category fc ON f.film_id = fc.film_id
     JOIN category c ON fc.category_id = c.category_id
-    WHERE EXTRACT(YEAR FROM p.payment_date) < 2018  -- Filter for payments before 2017
-    GROUP BY c.name, sale_year, sale_quarter
+    WHERE EXTRACT(YEAR FROM p.payment_date) = EXTRACT(YEAR FROM CURRENT_DATE)  -- Current year
+      AND EXTRACT(QUARTER FROM p.payment_date) = EXTRACT(QUARTER FROM CURRENT_DATE) -- Current quarter
+    GROUP BY c.name,sale_year, sale_quarter
 )
 SELECT 
     cs.category_name,
-    cs.sale_year,
-    cs.sale_quarter,
     cs.total_revenue
 FROM category_sales cs
-WHERE cs.total_revenue > 0
-ORDER BY cs.sale_year, cs.sale_quarter, cs.total_revenue DESC;
+WHERE cs.total_revenue > 0  -- Filter categories with at least one sale
+ORDER BY cs.total_revenue DESC; -- Sort by revenue in descending order
 
-SELECT * FROM public.sales_revenue_by_category_pre2017;
+SELECT * FROM sales_revenue_by_category_qtr;
 
 /*Task 2. Create a query language functions
 Create a query language function called 'get_sales_revenue_by_category_qtr' that accepts one parameter representing the current quarter and year and returns the same result as the
@@ -43,10 +42,20 @@ RETURNS TABLE (
 ) AS
 $$
 BEGIN
+    IF p_year IS NULL OR p_year < 0 THEN                         -- Checking error for input parameters
+        RAISE EXCEPTION 'Invalid year: %', p_year
+            USING HINT = 'Provide a non-negative year.';
+    END IF;
+
+    IF p_quarter NOT BETWEEN 1 AND 4 THEN                        -- Checking error for input parameters
+        RAISE EXCEPTION 'Invalid quarter: %', p_quarter
+            USING HINT = 'Quarter must be an integer between 1 and 4.';
+    END IF;
+    -- Execute the main query logic
     RETURN QUERY
     WITH category_sales AS (
         SELECT 
-            c.name AS category_name,
+            c.name::VARCHAR AS category_name,
             SUM(p.amount) AS total_revenue
         FROM payment p
         JOIN rental r ON p.rental_id = r.rental_id
@@ -55,7 +64,7 @@ BEGIN
         JOIN film_category fc ON f.film_id = fc.film_id
         JOIN category c ON fc.category_id = c.category_id
         WHERE EXTRACT(YEAR FROM p.payment_date) = p_year  -- Filter by input year
-        AND EXTRACT(QUARTER FROM p.payment_date) = p_quarter  -- Filter by input quarter
+          AND EXTRACT(QUARTER FROM p.payment_date) = p_quarter  -- Filter by input quarter
         GROUP BY c.name
     )
     SELECT 
@@ -66,6 +75,9 @@ BEGIN
     ORDER BY cs.total_revenue DESC;  -- Sort by revenue in descending order
 END;
 $$ LANGUAGE plpgsql;
+
+SELECT * 
+FROM get_sales_revenue_by_category_qtr(2017, 2);
 
 
 /*Task 3. Create procedure language functions
@@ -90,14 +102,14 @@ BEGIN
     RETURN QUERY
     WITH ranked_films AS (
         SELECT
-            co.country ::TEXT AS country,
+            UPPER(co.country) ::TEXT AS country,
             f.title ::VARCHAR AS film,
             f.rating ::VARCHAR AS rating,
             l.name ::VARCHAR AS language,
             CAST(f.length AS INTEGER) AS length,  -- Cast length to INTEGER early
             f.release_year::INT AS release_year,
             COUNT(r.rental_id) AS rental_count,
-            ROW_NUMBER() OVER (PARTITION BY co.country ORDER BY COUNT(r.rental_id) DESC) AS film_rank
+            ROW_NUMBER() OVER (PARTITION BY UPPER(co.country) ORDER BY COUNT(r.rental_id) DESC) AS film_rank
         FROM rental r
         JOIN customer c ON r.customer_id = c.customer_id
         JOIN address a ON c.address_id = a.address_id
@@ -106,8 +118,8 @@ BEGIN
         JOIN inventory i ON r.inventory_id = i.inventory_id
         JOIN film f ON i.film_id = f.film_id
         JOIN "language" l ON f.language_id = l.language_id
-        WHERE co.country = ANY (p_countries) -- Filter by given countries
-        GROUP BY co.country, f.title, f.rating, l.name, f.length, f.release_year
+        WHERE UPPER(co.country) =  ANY (SELECT UPPER(c) FROM unnest(p_countries) c) -- Normalize input array to lowercase
+        GROUP BY UPPER(co.country), f.title, f.rating, l.name, f.length, f.release_year
     )
     SELECT
         ranked_films.country,  -- Explicitly reference `country` from ranked_films
@@ -122,7 +134,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
-select * from most_popular_films_by_countries(array['Afghanistan','Brazil','United States']);
+select * from most_popular_films_by_countries(array['Afghanistan', 'BRAZIL', 'united states']);
 
 /*Task 4. Create procedure language functions
 Create a function that generates a list of movies available in stock based on a partial title match (e.g., movies containing the word 'love' in their title). 
@@ -135,6 +147,7 @@ CREATE OR REPLACE FUNCTION films_in_stock_by_title(
     search_pattern TEXT
 ) 
 RETURNS TABLE (
+	row_num INT,
     title TEXT,
     language TEXT,
     customer_name TEXT,
@@ -144,7 +157,8 @@ BEGIN
     -- Return query to find movies without ROW_NUMBER() for debugging
     RETURN QUERY
     SELECT 
-        f.title,
+		CAST (ROW_NUMBER() OVER (ORDER BY f.title) AS INT) AS row_num,  -- Generate row_num based on title order
+        f.title::TEXT,
         l."name"::TEXT AS language,  -- Cast language to TEXT
         (c.first_name || ' ' || c.last_name) AS customer_name,
         r.rental_date::DATE AS rental_date  -- Cast rental_date to DATE
@@ -155,9 +169,8 @@ BEGIN
         JOIN customer c ON r.customer_id = c.customer_id
         INNER JOIN "language" l ON l.language_id = f.language_id
     WHERE 
-        upper(f.title) LIKE upper(search_pattern)
+        UPPER(f.title) LIKE UPPER(search_pattern)
     ORDER BY f.title;
-
     -- Explicit check for no results found (post-query)
     IF NOT FOUND THEN
         RAISE NOTICE 'No movies found matching the title pattern "%".', search_pattern;
@@ -189,14 +202,14 @@ BEGIN
     -- Check if the movie title already exists in the 'film' table
     SELECT COUNT(*) INTO v_duplicate_count
     FROM film
-    WHERE title = p_title;
+    WHERE UPPER(title) = UPPER(p_title);
     IF v_duplicate_count > 0 THEN
         RAISE EXCEPTION 'Movie with title "%" already exists in the film table.', p_title;
     END IF;
     -- Check if the provided language exists in the 'language' table
     SELECT language_id INTO v_language_id
     FROM "language"
-    WHERE "name" = p_language;
+    WHERE UPPER("name") = UPPER(p_language);
     -- If language does not exist, raise an exception
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Language "%" does not exist in the language table.', p_language;
@@ -215,11 +228,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+--Testing----
+SELECT new_movie('The New Adventure', 2024, 'English');
+SELECT new_movie('The New Adventure', 2024, 'English'); -- should RAISE EXCEPTION
+SELECT new_movie('Another Adventure', 2024, 'Elvish'); -- NEW movie WITH UNKNOWN LANGUAGE -- should reaise EXCEPTION
+--Case sensitive checks:
+SELECT new_movie('Adventure Time', 2024, 'english');  -- Should work
+SELECT new_movie('adventure time', 2024, 'ENGLISH');  -- Should raise duplicate title exception
+
+
 ---TASK 6 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 /*1.	Why does ‘rewards_report’ function return 0 rows? Correct and recreate the function, so that it's able to return rows properly.
 Is there any function that can potentially be removed from the dvd_rental codebase? If so, which one and why?*/
 
-CREATE OR REPLACE FUNCTION public.rewards_report(min_monthly_purchases integer, min_dollar_amount_purchased numeric)
+CREATE OR REPLACE FUNCTION public.rewards_report(
+    min_monthly_purchases INTEGER, 
+    min_dollar_amount_purchased NUMERIC
+) 
 RETURNS SETOF customer
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -228,28 +253,30 @@ DECLARE
     last_month_start DATE;
     last_month_end DATE;
     rr RECORD;
+    last_payment_date DATE;
 BEGIN
-    /* Sanity checks */
     IF min_monthly_purchases <= 0 THEN
         RAISE EXCEPTION 'Minimum monthly purchases must be greater than 0';
     END IF;
     IF min_dollar_amount_purchased <= 0.00 THEN
         RAISE EXCEPTION 'Minimum dollar amount must be greater than 0';
     END IF;
-    /* Calculate the date range for the previous month */
-    last_month_start := date_trunc('month', CURRENT_DATE - INTERVAL '1 month');
+    SELECT MAX(payment_date) INTO last_payment_date    -- Get the most recent payment date from the database
+    FROM payment;
+    IF last_payment_date IS NULL THEN    -- Check if there are any payments in the database
+        RAISE EXCEPTION 'No payments found in the database.';
+    END IF;
+    last_month_start := date_trunc('month', last_payment_date - INTERVAL '1 month'); -- Calculate the date range for the previous month based on the most recent payment date
     last_month_end := (last_month_start + INTERVAL '1 month' - INTERVAL '1 day')::DATE;
-    /* Create a temporary table for storing eligible customer IDs */
-    CREATE TEMP TABLE IF NOT EXISTS tmpCustomer (customer_id INTEGER PRIMARY KEY) ON COMMIT DROP;
-    /* Insert customer IDs meeting the reward criteria */
-    INSERT INTO tmpCustomer (customer_id)
+    CREATE TEMP TABLE IF NOT EXISTS tmpCustomer (customer_id INTEGER PRIMARY KEY) ON COMMIT DROP; -- Create a temporary table for storing eligible customer IDs
+    INSERT INTO tmpCustomer (customer_id)      -- Insert customer IDs meeting the reward criteria
     SELECT p.customer_id
     FROM payment p
     WHERE p.payment_date BETWEEN last_month_start AND last_month_end
     GROUP BY p.customer_id
     HAVING COUNT(p.customer_id) >= min_monthly_purchases
        AND SUM(p.amount) >= min_dollar_amount_purchased;
-    /* Return customer details */
+    -- Return customer details
     FOR rr IN
         SELECT c.*
         FROM tmpCustomer t
@@ -260,6 +287,9 @@ BEGIN
     RETURN;
 END
 $function$;
+
+SELECT * 
+FROM public.rewards_report(3, 70.00);
 
 /** The ‘get_customer_balance’ function describes the business requirements for calculating the client balance. Unfortunately, 
 not all of them are implemented in this function. Try to change function using the requirements from the comments.*/
