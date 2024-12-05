@@ -1,7 +1,32 @@
 /*Task 2. Implement role-based authentication model for dvd_rental database*/
 --1. Create a new user with the username "rentaluser" and the password "rentalpassword". Give the user the ability to connect to the database but no other permissions.
 
-CREATE USER rentaluser WITH PASSWORD 'rentalpassword';
+DO $$
+BEGIN
+    -- Drop the role if it already exists
+    IF EXISTS (
+        SELECT 1 
+        FROM pg_roles 
+        WHERE rolname = 'rentaluser'
+    ) THEN
+    	ALTER USER rentaluser
+		WITH LOGIN PASSWORD 'rentalpassword';
+		-- Raise a notice for the update
+        RAISE NOTICE 'Role "rentaluser" was updated.';
+	  ELSE 
+		CREATE USER rentaluser
+   		WITH LOGIN PASSWORD 'rentalpassword'; -- Adjust attributes as needed
+		-- Raise a notice for the creation
+        RAISE NOTICE 'Role "rentaluser" was created.';
+	  END IF;
+END
+$$ LANGUAGE plpgsql;
+
+-- Check if the role was created.
+
+SELECT rolname
+FROM pg_roles
+WHERE rolname = 'rentaluser';
 GRANT CONNECT ON DATABASE dvdrental TO rentaluser;
 
 --2. Grant "rentaluser" SELECT permission for the "customer" table. Сheck to make sure this permission works correctly—write a SQL query to select all customers.
@@ -14,7 +39,27 @@ RESET ROLE; -- USING the DEFAULT role
 
 --3. Create a new user group called "rental" and add "rentaluser" to the group. 
 
-CREATE ROLE rental;
+DO $$
+BEGIN
+    -- Check if the role exists
+    IF EXISTS (
+        SELECT 1 
+        FROM pg_roles 
+        WHERE rolname = 'rental'
+    ) THEN
+        -- Alter the role to ensure desired attributes
+        ALTER ROLE rental;
+    ELSE
+        CREATE ROLE rental;
+    END IF;
+END
+$$ LANGUAGE plpgsql;
+
+-- Check if the role was created.
+
+SELECT rolname
+FROM pg_roles
+WHERE rolname = 'rental';
 GRANT rental TO rentaluser;-- Adding "rentaluser" to the group
 
 --4. Grant the "rental" group INSERT and UPDATE permissions for the "rental" table. Insert a new row and update one existing row in the "rental" table under that role. 
@@ -23,11 +68,78 @@ GRANT INSERT, UPDATE ON TABLE rental TO rental;-- Grant `INSERT` and `UPDATE` pe
 SET ROLE rentaluser;
 
 
-INSERT INTO rental (rental_id, rental_date, inventory_id, customer_id, staff_id, return_date) -- Insert a new row into the "rental" table
-VALUES (32305, '2024-11-20', 1, 1, 1, '2024-11-25'); -- IF we want TO ADD ROWS, which ARE NOT hardcoded, we have TO GRANT SELECT ALSO FOR the roles.
+-- Insert a new row with the rentaluser role:
+-- NOTE for IDs to be not hardcoded we have to give permission SELECT to other tables for the rentaluser role ( which is against the task description), so I created a function and gave permission to that function to rentaluser.
+RESET ROLE;   --- CREATE the FUNCTION AS the main USER.
+CREATE OR REPLACE FUNCTION insert_rental_dynamically()
+RETURNS TABLE (
+    rental_id INT,
+    rental_date DATE,
+    inventory_id INT,
+    customer_id INT,
+    staff_id INT,
+    return_date DATE
+) AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO rental (rental_id, rental_date, inventory_id, customer_id, staff_id, return_date)
+    SELECT 
+        nextval('rental_rental_id_seq') AS rental_id,  -- Dynamically generate rental_id
+        CURRENT_DATE::DATE AS rental_date,             -- Explicitly cast CURRENT_DATE to DATE
+        (SELECT r.inventory_id FROM rental r LIMIT 1)::INTEGER, -- Fetch an inventory_id already present in the rental table
+        (SELECT r.customer_id FROM rental r LIMIT 1)::INTEGER,  -- Explicitly cast customer_id to INTEGER
+        (SELECT r.staff_id FROM rental r LIMIT 1)::INTEGER,     -- Fetch a staff_id already present in the rental table
+        CURRENT_DATE + interval '5 days' AS return_date -- Calculate return_date dynamically
+    WHERE NOT EXISTS (
+        SELECT 1 
+        FROM rental r
+        WHERE r.inventory_id = (SELECT r2.inventory_id FROM rental r2 LIMIT 1)
+          AND r.customer_id = (SELECT r2.customer_id FROM rental r2 LIMIT 1)
+    )
+    RETURNING rental.rental_id, rental.rental_date::DATE, rental.inventory_id, rental.customer_id::INTEGER, rental.staff_id::INTEGER, rental.return_date::DATE; -- Explicitly cast customer_id to INTEGER
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
-UPDATE rental SET return_date = '2024-11-28' WHERE rental_id = 32305;-- Update an existing row in the "rental" table
+GRANT EXECUTE ON FUNCTION insert_rental_dynamically() TO rentaluser;
+SET ROLE rentaluser;
+SELECT * FROM insert_rental_dynamically();
+SELECT * FROM rental ORDER BY rental_id DESC LIMIT 1;
+
+
+--UPDATE the last added row
+DO $$ 
+DECLARE 
+    v_last_rental_id INT;
+BEGIN
+    -- Fetch the rental_id of the last added row (most recent row by rental_id)
+    SELECT rental_id INTO v_last_rental_id
+    FROM rental
+    ORDER BY rental_id DESC
+    LIMIT 1;
+    -- Check if the row exists and the return_date is not already the desired value
+    IF EXISTS (
+        SELECT 1
+        FROM rental
+        WHERE rental_id = v_last_rental_id 
+    ) THEN
+        -- Update the return_date if the condition is met
+        UPDATE rental
+        SET return_date = CURRENT_DATE + interval '10 days'
+        WHERE rental_id = v_last_rental_id;
+        -- Log a notice for debugging
+        RAISE NOTICE 'Updated rental_id % with new return_date %', v_last_rental_id, CURRENT_DATE + interval '10 days';
+    ELSE
+        -- Log a notice if no update was necessary
+        RAISE NOTICE 'No update required for rental_id %', v_last_rental_id;
+    END IF;
+END $$;
+
+--Verifying the update:
+SELECT * 
+FROM rental
+ORDER BY rental_id DESC
+LIMIT 1;  -- Check the most recent rental entry
 
 RESET ROLE;
 
@@ -56,7 +168,20 @@ WHERE customer_id IN (
 ORDER BY customer_id DESC
 LIMIT 1;
 
-CREATE ROLE client_Austin_Cintron;
+DO $$ 
+BEGIN
+    -- create the role only if it doesn't exist
+    BEGIN
+        -- This creates the role if it doesn't already exist
+        CREATE ROLE client_Austin_Cintron WITH NOLOGIN;
+    EXCEPTION
+        WHEN duplicate_object THEN
+            -- If the role already exists, just update it
+            RAISE NOTICE 'Role "client_Austin_Cintron" already exists. Updating attributes.';
+            ALTER ROLE client_Austin_Cintron WITH NOLOGIN;
+    END;
+END $$ 
+LANGUAGE plpgsql;
 GRANT SELECT ON payment, rental TO client_Austin_Cintron; -- Assign  permissions for payment AND rental.
 
 
@@ -95,7 +220,7 @@ BEGIN
 END $$;
 
 
-SET app.current_customer = '599'; -- Set the current customer in the session,replace '1' with the current customer's ID
+SET app.current_customer = '599'; 
 -- Grant SELECT to all customers for both tables
 SET ROLE client_Austin_Cintron;
 -- Testing it
