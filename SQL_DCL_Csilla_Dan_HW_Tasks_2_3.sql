@@ -151,7 +151,21 @@ REVOKE INSERT ON TABLE rental FROM rental;
 SET ROLE rentaluser;
 
 INSERT INTO rental (rental_id, rental_date, inventory_id, customer_id, staff_id, return_date)
-VALUES (32306, '2024-11-21', 2, 2, 1, '2024-11-30');
+SELECT 
+    (SELECT COALESCE(MAX(rental_id), 0) + 1 FROM rental) AS rental_id, -- Generate rental_id dynamically
+    CURRENT_DATE AS rental_date,                                      -- Use current date for rental_date
+    inventory.inventory_id,                                           -- Select inventory_id dynamically
+    customer.customer_id,                                             -- Select customer_id dynamically
+    staff.staff_id,                                                   -- Select staff_id dynamically
+    CURRENT_DATE + INTERVAL '9 days' AS return_date                   -- Add 9 days to current date for return_date
+FROM 
+    inventory
+JOIN 
+    customer ON customer.customer_id = 2                              -- Matching specific customer_id
+JOIN 
+    staff ON staff.staff_id = 1                                       -- Matching specific staff_id
+WHERE 
+    inventory.inventory_id = 2;                                       -- Matching specific inventory_id
 
 RESET ROLE;
 
